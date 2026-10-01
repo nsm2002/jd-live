@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Butler Field Live</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:Arial,Helvetica,sans-serif; }
+  #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; }
+  video { width:100%; height:100%; object-fit:contain; background:#000; }
+  #top {
+    position:fixed; top:0; left:0; right:0; z-index:20;
+    padding:12px 14px;
+    background:linear-gradient(rgba(0,0,0,.75), transparent);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    pointer-events:none;
+  }
+  #title { font-weight:700; text-shadow:0 1px 3px #000; }
+  #status { font-size:13px; opacity:.9; text-shadow:0 1px 3px #000; }
+  #controls {
+    position:fixed; left:0; right:0; bottom:0; z-index:30;
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    padding:22px 12px 14px;
+    background:linear-gradient(transparent, rgba(0,0,0,.8));
+    transition:opacity .3s ease;
+  }
+  #controls.hidden { opacity:0; pointer-events:none; }
+  button, a.button {
+    border:0; border-radius:9px; padding:11px 15px; font:600 14px Arial,Helvetica,sans-serif;
+    background:#f2f2f2; color:#111; text-decoration:none; cursor:pointer;
+  }
+  #msg {
+    position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:30px; color:#ddd; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<div id="stage"><video id="video" controls playsinline></video></div>
+<div id="msg">Connecting to Tom Butler Field…</div>
+<div id="top"><div id="title">Tom Butler Field — Live</div><div id="status">Starting…</div></div>
+<div id="controls">
+  <button id="playfs">Play / Full Screen</button>
+  <button id="reconnect">Reconnect</button>
+  <a class="button" href="https://watch.yourgamecam.com/?group=_juniordeputybaseball" target="_blank" rel="noopener">Fallback</a>
+</div>
+
+<script>
+const LIVE_URL = 'https://pull-5097.5centscdn.com/juniordeputybaseball/juniordeputybaseball-tombutlerfield-homeplate.stream/playlist.m3u8';
+const video = document.getElementById('video');
+const statusEl = document.getElementById('status');
+const msg = document.getElementById('msg');
+const controls = document.getElementById('controls');
+let hls = null, retryTimer = null, hideTimer = null, triedFallbackCDN = false;
+
+function setStatus(s) { statusEl.textContent = s; }
+function showMessage(s) { msg.textContent = s; msg.style.display = 'flex'; }
+function hideMessage() { msg.style.display = 'none'; }
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function ensureHls() {
+  if (window.Hls) return true;
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js',
+    'https://unpkg.com/hls.js@1/dist/hls.min.js'
+  ];
+  for (const src of sources) {
+    try {
+      setStatus('Loading player…');
+      await loadScript(src);
+      if (window.Hls) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+function retry() {
+  clearTimeout(retryTimer);
+  setStatus('Offline / retrying');
+  showMessage('Butler Field is unavailable right now. Retrying automatically…');
+  retryTimer = setTimeout(connect, 10000);
+}
+
+async function connect() {
+  clearTimeout(retryTimer);
+  setStatus('Connecting…');
+  showMessage('Connecting to Tom Butler Field…');
+
+  if (hls) {
+    try { hls.destroy(); } catch(e) {}
+    hls = null;
+  }
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+
+  // Safari/iOS may support HLS natively.
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = LIVE_URL;
+    video.addEventListener('loadedmetadata', () => {
+      setStatus('Live');
+      hideMessage();
+      video.play().catch(() => {});
+    }, { once:true });
+    video.addEventListener('error', retry, { once:true });
+    return;
+  }
+
+  const ok = await ensureHls();
+  if (!ok || !window.Hls || !Hls.isSupported()) {
+    setStatus('Player library blocked');
+    showMessage('The browser could not load the HLS player library. Use the Fallback button below.');
+    return;
+  }
+
+  hls = new Hls({
+    enableWorker: true,
+    lowLatencyMode: true,
+    liveSyncDurationCount: 2,
+    liveMaxLatencyDurationCount: 5,
+    manifestLoadingMaxRetry: 2,
+    levelLoadingMaxRetry: 2,
+    fragLoadingMaxRetry: 3
+  });
+
+  hls.attachMedia(video);
+  hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(LIVE_URL));
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    setStatus('Live');
+    hideMessage();
+    video.play().catch(() => {});
+  });
+  hls.on(Hls.Events.ERROR, (_evt, data) => {
+    if (!data.fatal) return;
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      setStatus('Recovering…');
+      try { hls.recoverMediaError(); } catch(e) { retry(); }
+    } else {
+      retry();
+    }
+  });
+}
+
+async function playFullscreen() {
+  try { await video.play(); } catch(e) {}
+  try {
+    if (video.requestFullscreen) await video.requestFullscreen();
+    else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+  } catch(e) {}
+}
+
+function revealControls() {
+  controls.classList.remove('hidden');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => controls.classList.add('hidden'), 3500);
+}
+
+document.getElementById('playfs').addEventListener('click', playFullscreen);
+document.getElementById('reconnect').addEventListener('click', connect);
+document.addEventListener('mousemove', revealControls);
+document.addEventListener('touchstart', revealControls, {passive:true});
+video.addEventListener('click', revealControls);
+
+connect();
+revealControls();
+</script>
+</body>
+</html>
