@@ -1,6 +1,6 @@
 {
-  "name": "Butler Field Live",
-  "short_name": "Butler Live",
+  "name": "Junior Deputy Live",
+  "short_name": "JD Live",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -6,11 +6,12 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Butler Live">
+<meta name="apple-mobile-web-app-title" content="JD Live">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Butler Field Live</title>
+<title>Junior Deputy Live</title>
 <style>
   :root { color-scheme: dark; }
+  * { box-sizing:border-box; }
   html, body {
     margin:0; padding:0; width:100%; height:100%;
     background:#000; overflow:hidden;
@@ -28,51 +29,183 @@
     background:#000;
   }
   #top {
-    position:fixed; top:env(safe-area-inset-top,0); left:0; right:0; z-index:20;
-    padding:12px 14px;
-    background:linear-gradient(rgba(0,0,0,.78), transparent);
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    position:fixed;
+    top:env(safe-area-inset-top,0);
+    left:0; right:0; z-index:20;
+    padding:12px 14px 34px;
+    background:linear-gradient(rgba(0,0,0,.80), transparent);
+    display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
     pointer-events:none;
   }
   #title { font-weight:700; text-shadow:0 1px 3px #000; }
-  #status { font-size:13px; opacity:.9; text-shadow:0 1px 3px #000; }
+  #status {
+    font-size:13px; opacity:.9; text-shadow:0 1px 3px #000;
+    text-align:right;
+  }
   #controls {
-    position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom,0); z-index:30;
-    display:flex; align-items:center; justify-content:center; gap:10px;
-    padding:24px 12px 14px;
-    background:linear-gradient(transparent, rgba(0,0,0,.84));
+    position:fixed; left:0; right:0;
+    bottom:env(safe-area-inset-bottom,0); z-index:30;
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px;
+    padding:30px 10px 12px;
+    background:linear-gradient(transparent, rgba(0,0,0,.86));
     transition:opacity .3s ease;
   }
   #controls.hidden { opacity:0; pointer-events:none; }
   button, a.button {
-    border:0; border-radius:9px; padding:12px 16px;
-    font:600 15px Arial,Helvetica,sans-serif;
-    background:#f2f2f2; color:#111; text-decoration:none; cursor:pointer;
+    border:0; border-radius:9px;
+    padding:11px 14px;
+    font:600 14px Arial,Helvetica,sans-serif;
+    background:#f2f2f2; color:#111;
+    text-decoration:none; cursor:pointer;
   }
+  button:active, a.button:active { transform:scale(.98); }
   #msg {
     position:fixed; inset:0; z-index:10;
     display:flex; align-items:center; justify-content:center;
     text-align:center; padding:30px; color:#ddd; pointer-events:none;
   }
+
+  /* Field picker */
+  #fieldBackdrop {
+    position:fixed; inset:0; z-index:80;
+    background:rgba(0,0,0,.64);
+    display:none; align-items:flex-end; justify-content:center;
+    padding:14px 14px calc(14px + env(safe-area-inset-bottom,0));
+  }
+  #fieldBackdrop.open { display:flex; }
+  #fieldSheet {
+    width:min(560px,100%);
+    background:#171717;
+    border:1px solid #383838;
+    border-radius:16px;
+    padding:14px;
+    box-shadow:0 18px 60px rgba(0,0,0,.55);
+  }
+  #fieldSheet h2 {
+    margin:2px 4px 12px;
+    font-size:18px;
+  }
+  #fieldGrid {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:8px;
+  }
+  .fieldChoice {
+    width:100%;
+    padding:13px 10px;
+    background:#2a2a2a;
+    color:#fff;
+    border:1px solid #444;
+  }
+  .fieldChoice.current {
+    outline:2px solid #fff;
+    background:#3b3b3b;
+  }
+  #closeFields {
+    width:100%;
+    margin-top:10px;
+    background:#eee;
+    color:#111;
+  }
+  #shareHint {
+    margin:10px 4px 0;
+    font-size:12px; line-height:1.35;
+    color:#bdbdbd;
+  }
+
+  @media (max-width: 560px) {
+    button, a.button { font-size:13px; padding:10px 11px; }
+    #fieldGrid { grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
-<div id="stage"><video id="video" controls playsinline webkit-playsinline></video></div>
+<div id="stage">
+  <video id="video" controls playsinline webkit-playsinline></video>
+</div>
+
 <div id="msg">Connecting to Tom Butler Field…</div>
-<div id="top"><div id="title">Tom Butler Field — Live</div><div id="status">Starting…</div></div>
+
+<div id="top">
+  <div id="title">Tom Butler Field — Live</div>
+  <div id="status">Starting…</div>
+</div>
+
 <div id="controls">
   <button id="playfs">Play / Full Screen</button>
   <button id="reconnect">Reconnect</button>
+  <button id="fieldsBtn">Fields</button>
   <a class="button" href="https://watch.yourgamecam.com/?group=_juniordeputybaseball" target="_blank" rel="noopener">Fallback</a>
 </div>
 
+<div id="fieldBackdrop" aria-hidden="true">
+  <div id="fieldSheet" role="dialog" aria-modal="true" aria-labelledby="fieldHeading">
+    <h2 id="fieldHeading">Choose a field</h2>
+    <div id="fieldGrid"></div>
+    <button id="closeFields">Close</button>
+    <div id="shareHint">
+      Butler opens automatically. Selecting another field updates the page address, so that field can also be shared directly.
+    </div>
+  </div>
+</div>
+
 <script>
-const LIVE_URL = 'https://pull-5097.5centscdn.com/juniordeputybaseball/juniordeputybaseball-tombutlerfield-homeplate.stream/playlist.m3u8';
+const FIELDS = {
+  "butler": {
+    "name": "Tom Butler Field",
+    "stream": "juniordeputybaseball-tombutlerfield-homeplate"
+  },
+  "loftis": {
+    "name": "Ermie Loftis Field",
+    "stream": "juniordeputybaseball-ermieloftisfield-homeplate"
+  },
+  "hughes": {
+    "name": "Howard Hughes Field",
+    "stream": "juniordeputybaseball-howardhughesfield-homeplate"
+  },
+  "callahan": {
+    "name": "Jim Callahan Field",
+    "stream": "juniordeputybaseball-jimcallahanfield-homeplate"
+  },
+  "best": {
+    "name": "Ken Best Field",
+    "stream": "juniordeputybaseball-kenbestfield-homeplate"
+  }
+};
+const CDN_BASE = 'https://pull-5097.5centscdn.com/juniordeputybaseball/';
+
 const video = document.getElementById('video');
 const statusEl = document.getElementById('status');
 const msg = document.getElementById('msg');
+const titleEl = document.getElementById('title');
 const controls = document.getElementById('controls');
-let hls = null, retryTimer = null, hideTimer = null;
+const fieldBackdrop = document.getElementById('fieldBackdrop');
+const fieldGrid = document.getElementById('fieldGrid');
+
+let hls = null;
+let retryTimer = null;
+let hideTimer = null;
+let currentFieldKey = 'butler';
+
+function streamUrl(key) {
+  return CDN_BASE + FIELDS[key].stream + '.stream/playlist.m3u8';
+}
+
+function requestedField() {
+  const params = new URLSearchParams(location.search);
+  const key = (params.get('field') || '').toLowerCase();
+  return FIELDS[key] ? key : 'butler';
+}
+
+function setFieldInUrl(key) {
+  const url = new URL(location.href);
+  if (key === 'butler') {
+    url.searchParams.delete('field');
+  } else {
+    url.searchParams.set('field', key);
+  }
+  history.replaceState(null, '', url);
+}
 
 function setStatus(s) { statusEl.textContent = s; }
 function showMessage(s) { msg.textContent = s; msg.style.display = 'flex'; }
@@ -106,26 +239,34 @@ async function ensureHls() {
 
 function retry() {
   clearTimeout(retryTimer);
+  const name = FIELDS[currentFieldKey].name;
   setStatus('Offline / retrying');
-  showMessage('Butler Field is unavailable right now. Retrying automatically…');
+  showMessage(name + ' is unavailable right now. Retrying automatically…');
   retryTimer = setTimeout(connect, 10000);
 }
 
 async function connect() {
   clearTimeout(retryTimer);
+  const field = FIELDS[currentFieldKey];
+  document.title = field.name + ' Live';
+  titleEl.textContent = field.name + ' — Live';
   setStatus('Connecting…');
-  showMessage('Connecting to Tom Butler Field…');
+  showMessage('Connecting to ' + field.name + '…');
 
   if (hls) {
     try { hls.destroy(); } catch(e) {}
     hls = null;
   }
+
   video.pause();
   video.removeAttribute('src');
   video.load();
 
+  const liveUrl = streamUrl(currentFieldKey);
+
+  // Native HLS on iPhone/iPad/Safari.
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = LIVE_URL;
+    video.src = liveUrl;
     video.addEventListener('loadedmetadata', () => {
       setStatus('Live');
       hideMessage();
@@ -135,10 +276,11 @@ async function connect() {
     return;
   }
 
+  // HLS.js for desktop/other browsers.
   const ok = await ensureHls();
   if (!ok || !window.Hls || !Hls.isSupported()) {
     setStatus('Player library blocked');
-    showMessage('The browser could not load the HLS player library. Use the Fallback button below.');
+    showMessage('The browser could not load the HLS player library. Use Fallback.');
     return;
   }
 
@@ -153,7 +295,7 @@ async function connect() {
   });
 
   hls.attachMedia(video);
-  hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(LIVE_URL));
+  hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(liveUrl));
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     setStatus('Live');
     hideMessage();
@@ -164,14 +306,16 @@ async function connect() {
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
       setStatus('Recovering…');
       try { hls.recoverMediaError(); } catch(e) { retry(); }
-    } else retry();
+    } else {
+      retry();
+    }
   });
 }
 
 async function playFullscreen() {
   try { await video.play(); } catch(e) {}
 
-  // iPhone/iPad Safari: use Apple's native video fullscreen API.
+  // iPhone/iPad native full-screen video.
   try {
     if (typeof video.webkitEnterFullscreen === 'function') {
       video.webkitEnterFullscreen();
@@ -191,18 +335,63 @@ async function playFullscreen() {
   } catch(e) {}
 }
 
+function chooseField(key) {
+  if (!FIELDS[key]) return;
+  currentFieldKey = key;
+  setFieldInUrl(key);
+  renderFieldButtons();
+  closeFields();
+  connect();
+}
+
+function renderFieldButtons() {
+  fieldGrid.innerHTML = '';
+  Object.entries(FIELDS).forEach(([key, field]) => {
+    const b = document.createElement('button');
+    b.className = 'fieldChoice' + (key === currentFieldKey ? ' current' : '');
+    b.textContent = field.name;
+    b.addEventListener('click', () => chooseField(key));
+    fieldGrid.appendChild(b);
+  });
+}
+
+function openFields() {
+  renderFieldButtons();
+  fieldBackdrop.classList.add('open');
+  fieldBackdrop.setAttribute('aria-hidden','false');
+  controls.classList.remove('hidden');
+}
+
+function closeFields() {
+  fieldBackdrop.classList.remove('open');
+  fieldBackdrop.setAttribute('aria-hidden','true');
+}
+
 function revealControls() {
   controls.classList.remove('hidden');
   clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => controls.classList.add('hidden'), 3500);
+  if (!fieldBackdrop.classList.contains('open')) {
+    hideTimer = setTimeout(() => controls.classList.add('hidden'), 3500);
+  }
 }
 
 document.getElementById('playfs').addEventListener('click', playFullscreen);
 document.getElementById('reconnect').addEventListener('click', connect);
+document.getElementById('fieldsBtn').addEventListener('click', openFields);
+document.getElementById('closeFields').addEventListener('click', closeFields);
+
+fieldBackdrop.addEventListener('click', (e) => {
+  if (e.target === fieldBackdrop) closeFields();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeFields();
+});
 document.addEventListener('mousemove', revealControls);
 document.addEventListener('touchstart', revealControls, {passive:true});
 video.addEventListener('click', revealControls);
 
+currentFieldKey = requestedField();
+renderFieldButtons();
 connect();
 revealControls();
 </script>
