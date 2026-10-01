@@ -191,6 +191,15 @@ function streamUrl(key) {
   return CDN_BASE + FIELDS[key].stream + '.stream/playlist.m3u8';
 }
 
+function chunklistUrl(key) {
+  return CDN_BASE + FIELDS[key].stream + '.stream/chunklist.m3u8';
+}
+
+function bust(url) {
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + '_=' + Date.now();
+}
+
 function requestedField() {
   const params = new URLSearchParams(location.search);
   const key = (params.get('field') || '').toLowerCase();
@@ -237,12 +246,34 @@ async function ensureHls() {
   return false;
 }
 
-function retry() {
+function retry(delay = 2000) {
   clearTimeout(retryTimer);
   const name = FIELDS[currentFieldKey].name;
-  setStatus('Offline / retrying');
-  showMessage(name + ' is unavailable right now. Retrying automatically…');
-  retryTimer = setTimeout(connect, 10000);
+  setStatus('Reconnecting…');
+  showMessage(name + ' is not responding yet. Retrying automatically…');
+  retryTimer = setTimeout(connect, delay);
+}
+
+async function warmStream(key) {
+  // Desktop browsers use HLS.js. A quick no-cache request to the live media
+  // playlist both verifies that the CDN edge is ready and avoids waiting on
+  // a stale/negative cached manifest.
+  const url = bust(chunklistUrl(key));
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const r = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    return r.ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function connect() {
@@ -277,7 +308,12 @@ async function connect() {
   }
 
   // HLS.js for desktop/other browsers.
-  const ok = await ensureHls();
+  // Load the player library while also warming the live CDN endpoint.
+  const [ok] = await Promise.all([
+    ensureHls(),
+    warmStream(currentFieldKey)
+  ]);
+
   if (!ok || !window.Hls || !Hls.isSupported()) {
     setStatus('Player library blocked');
     showMessage('The browser could not load the HLS player library. Use Fallback.');
@@ -285,30 +321,59 @@ async function connect() {
   }
 
   hls = new Hls({
-    enableWorker:true,
-    lowLatencyMode:true,
-    liveSyncDurationCount:2,
-    liveMaxLatencyDurationCount:5,
-    manifestLoadingMaxRetry:2,
-    levelLoadingMaxRetry:2,
-    fragLoadingMaxRetry:3
+    enableWorker: true,
+    lowLatencyMode: true,
+    liveSyncDurationCount: 2,
+    liveMaxLatencyDurationCount: 6,
+
+    // Fail quickly and retry ourselves instead of sitting for 10–30 seconds.
+    manifestLoadingTimeOut: 5000,
+    manifestLoadingMaxRetry: 1,
+    manifestLoadingRetryDelay: 500,
+    manifestLoadingMaxRetryTimeout: 2000,
+
+    levelLoadingTimeOut: 5000,
+    levelLoadingMaxRetry: 2,
+    levelLoadingRetryDelay: 500,
+    levelLoadingMaxRetryTimeout: 2500,
+
+    fragLoadingTimeOut: 10000,
+    fragLoadingMaxRetry: 4,
+    fragLoadingRetryDelay: 500,
+    fragLoadingMaxRetryTimeout: 4000
   });
 
   hls.attachMedia(video);
-  hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(liveUrl));
+
+  hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+    // On desktop we can go straight to the live media playlist. This skips
+    // the tiny master-playlist round trip and has been the more reliable URL
+    // in the captured traffic. Cache-bust each fresh connection attempt.
+    hls.loadSource(bust(chunklistUrl(currentFieldKey)));
+  });
+
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     setStatus('Live');
     hideMessage();
     video.play().catch(() => {});
   });
+
   hls.on(Hls.Events.ERROR, (_evt, data) => {
     if (!data.fatal) return;
+
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-      setStatus('Recovering…');
-      try { hls.recoverMediaError(); } catch(e) { retry(); }
-    } else {
-      retry();
+      setStatus('Recovering video…');
+      try {
+        hls.recoverMediaError();
+      } catch(e) {
+        retry(1500);
+      }
+      return;
     }
+
+    // Network/manifest failures are usually transient at the CDN edge.
+    // Reconnect quickly rather than leaving the user staring at an error.
+    retry(1500);
   });
 }
 
